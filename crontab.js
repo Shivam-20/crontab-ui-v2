@@ -1,6 +1,6 @@
 'use strict';
 
-const Datastore = require('@seald-io/nedb');
+const db = require('./lib/db');
 const path = require('path');
 const { exec } = require('child_process');
 const fs = require('fs');
@@ -9,14 +9,12 @@ const cronstrue = require('cronstrue/i18n');
 
 const humanCronLocale = process.env.HUMANCRON ?? 'en';
 
-const dbFolder = process.env.CRON_DB_PATH || path.join(__dirname, 'crontabs');
+const dbFolder = db.db_folder;
 console.log(`Cron db path: ${dbFolder}`);
 
 const logFolder = path.join(dbFolder, 'logs');
 const envFile = path.join(dbFolder, 'env.db');
-const crontabDbFile = path.join(dbFolder, 'crontab.db');
-
-const db = new Datastore({ filename: crontabDbFile, autocompactionInterval: 60000 });
+const crontabDbFile = db.crontab_db_file;
 
 let cronPath = '/tmp';
 if (process.env.CRON_PATH !== undefined) {
@@ -24,15 +22,11 @@ if (process.env.CRON_PATH !== undefined) {
   cronPath = process.env.CRON_PATH;
 }
 
-db.loadDatabase((err) => {
-  if (err) throw err;
-});
-
 if (!fs.existsSync(logFolder)) {
-  fs.mkdirSync(logFolder);
+  fs.mkdirSync(logFolder, { recursive: true });
 }
 
-function buildCrontab(name, command, schedule, stopped, logging, mailing) {
+function buildCrontab(name, command, schedule, stopped, logging, mailing, minimal, disableMethod) {
   return {
     name,
     command,
@@ -41,10 +35,17 @@ function buildCrontab(name, command, schedule, stopped, logging, mailing) {
     timestamp: new Date().toString(),
     logging,
     mailing: mailing || {},
+    minimal: minimal || 'false',
+    disableMethod: disableMethod || 'remove',
   };
 }
 
 function makeCommand(tab) {
+  // If minimal flag is set, return plain command without output capture
+  if (tab.minimal === 'true' || tab.minimal === true) {
+    return tab.command;
+  }
+
   const stderr = path.join(cronPath, `${tab._id}.stderr`);
   const stdout = path.join(cronPath, `${tab._id}.stdout`);
   const logFile = path.join(logFolder, `${tab._id}.log`);
@@ -87,31 +88,35 @@ exports.log_folder = logFolder;
 exports.env_file = envFile;
 exports.crontab_db_file = crontabDbFile;
 
-exports.create_new = (name, command, schedule, logging, mailing) => {
-  const tab = buildCrontab(name, command, schedule, false, logging, mailing);
+exports.create_new = (name, command, schedule, logging, mailing, minimal, disableMethod) => {
+  const tab = buildCrontab(name, command, schedule, false, logging, mailing, minimal, disableMethod);
   tab.created = Date.now();
   tab.saved = false;
   db.insert(tab);
 };
 
 exports.update = (data) => {
-  const tab = buildCrontab(data.name, data.command, data.schedule, null, data.logging, data.mailing);
+  const tab = buildCrontab(data.name, data.command, data.schedule, null, data.logging, data.mailing, data.minimal, data.disableMethod);
   tab.saved = false;
   db.update({ _id: data._id }, tab);
 };
 
-exports.status = (_id, stopped) => {
-  db.update({ _id }, { $set: { stopped, saved: false } });
+exports.status = (_id, stopped, disableMethod) => {
+  db.update({ _id }, { $set: { stopped, saved: false, disableMethod: disableMethod || 'remove' } });
 };
 
 exports.remove = (_id) => {
   db.remove({ _id }, {});
 };
 
-exports.crontabs = (callback) => {
+exports.crontabs = (callback, hasRetried = false) => {
   db.find({}).sort({ created: -1 }).exec((err, docs) => {
     if (err) {
       console.error(err);
+      if (!hasRetried) {
+        db.reload();
+        return exports.crontabs(callback, true);
+      }
       return callback([]);
     }
     for (const doc of docs) {
@@ -133,14 +138,13 @@ exports.crontabs = (callback) => {
 
 exports.get_crontab = (_id, callback) => {
   db.find({ _id }).exec((err, docs) => {
-    callback(docs[0]);
+    callback(docs && docs.length > 0 ? docs[0] : null);
   });
 };
 
 exports.runjob = (_id) => {
-  db.find({ _id }).exec((err, docs) => {
-    if (err || !docs.length) return;
-    const res = docs[0];
+  exports.get_crontab(_id, (res) => {
+    if (!res) return;
     const envVars = exports.get_env();
     let cmd = makeCommand(res);
     cmd = addEnvVars(envVars, cmd);
@@ -163,8 +167,17 @@ exports.set_crontab = (envVars, callback) => {
       crontabString += `${envVars}\n`;
     }
     for (const tab of tabs) {
-      if (!tab.stopped) {
-        crontabString += `${tab.schedule} ${makeCommand(tab)}\n`;
+      const cmd = makeCommand(tab);
+      const line = `${tab.schedule} ${cmd}\n`;
+      
+      if (tab.stopped) {
+        // Handle disabled jobs based on disableMethod
+        if (tab.disableMethod === 'comment') {
+          crontabString += `# ${line}`;
+        }
+        // If disableMethod is 'remove' or undefined, skip the line (current behavior)
+      } else {
+        crontabString += line;
       }
     }
 
@@ -184,7 +197,7 @@ exports.set_crontab = (envVars, callback) => {
             console.error(err);
             return callback(err);
           }
-          db.update({}, { $set: { saved: true } }, { multi: true });
+          db.update({}, { $set: { saved: true } });
           callback();
         });
       });
@@ -219,11 +232,15 @@ exports.backup = (callback) => {
 exports.restore = (dbName) => {
   fs.createReadStream(path.join(dbFolder, dbName))
     .pipe(fs.createWriteStream(crontabDbFile));
-  db.loadDatabase();
+  db.reload();
 };
 
 exports.reload_db = () => {
-  db.loadDatabase();
+  db.reload();
+};
+
+exports.close_db = () => {
+  db.close();
 };
 
 exports.get_env = () => {
@@ -233,10 +250,22 @@ exports.get_env = () => {
   return '';
 };
 
-exports.import_crontab = () => {
+exports.import_crontab = (callback) => {
   exec('crontab -l', (error, stdout) => {
+    if (error) {
+      if (callback) callback();
+      return;
+    }
+
     const lines = stdout.split('\n');
     const namePrefix = Date.now();
+    let pending = 0;
+
+    const maybeDone = () => {
+      if (pending === 0 && callback) {
+        callback();
+      }
+    };
 
     lines.forEach((line, index) => {
       line = line.replace(/\t+/g, ' ');
@@ -250,6 +279,7 @@ exports.import_crontab = () => {
       } catch (_e) { /* ignore */ }
 
       if (command && schedule && isValid) {
+        pending += 1;
         const name = `${namePrefix}_${index}`;
         db.findOne({ command, schedule }, (err, doc) => {
           if (err) throw err;
@@ -260,9 +290,13 @@ exports.import_crontab = () => {
             doc.schedule = schedule;
             exports.update(doc);
           }
+          pending -= 1;
+          maybeDone();
         });
       }
     });
+
+    maybeDone();
   });
 };
 
@@ -273,8 +307,15 @@ exports.preview_crontab = (envVars, callback) => {
       crontabString += `${envVars}\n`;
     }
     for (const tab of tabs) {
-      if (!tab.stopped) {
-        crontabString += `${tab.schedule} ${makeCommand(tab)}\n`;
+      const cmd = makeCommand(tab);
+      const line = `${tab.schedule} ${cmd}\n`;
+      
+      if (tab.stopped) {
+        if (tab.disableMethod === 'comment') {
+          crontabString += `# ${line}`;
+        }
+      } else {
+        crontabString += line;
       }
     }
     callback(crontabString);

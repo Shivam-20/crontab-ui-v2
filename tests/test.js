@@ -295,7 +295,124 @@ describe('Crontab UI', () => {
     });
   });
 });
+describe('Minimal crontab and disable methods', () => {
+  describe('POST /save with minimal=true', () => {
+    it('should create a job with minimal flag', async () => {
+      const res = await request(app)
+        .post('/save')
+        .send({
+          _id: -1,
+          name: 'minimal-test',
+          command: 'echo test',
+          schedule: '*/5 * * * *',
+          logging: 'false',
+          mailing: {},
+          minimal: true,
+          disableMethod: 'remove',
+        });
+      expect(res.status).toBe(200);
+    });
 
+    it('should show minimal job without tee wrapper in preview', async () => {
+      const res = await request(app).get('/preview_crontab');
+      expect(res.status).toBe(200);
+      // Minimal jobs should have plain command, not tee wrapper
+      const lines = res.text.split('\n');
+      const minimalLine = lines.find(l => l.includes('echo test'));
+      expect(minimalLine).toBeDefined();
+      // Should NOT contain tee or stderr for minimal job
+      if (minimalLine) {
+        expect(minimalLine).toMatch(/\*\/5 \* \* \* \* echo test/);
+      }
+    });
+  });
+
+  describe('Disable method: comment vs remove', () => {
+    let commentJobId;
+    let removeJobId;
+
+    it('should create job with disableMethod=comment', async () => {
+      const res = await request(app)
+        .post('/save')
+        .send({
+          _id: -1,
+          name: 'comment-disable-test',
+          command: 'echo comment',
+          schedule: '0 0 * * *',
+          logging: 'false',
+          mailing: {},
+          minimal: false,
+          disableMethod: 'comment',
+        });
+      expect(res.status).toBe(200);
+    });
+
+    it('should create job with disableMethod=remove', async () => {
+      const res = await request(app)
+        .post('/save')
+        .send({
+          _id: -1,
+          name: 'remove-disable-test',
+          command: 'echo remove',
+          schedule: '0 1 * * *',
+          logging: 'false',
+          mailing: {},
+          minimal: false,
+          disableMethod: 'remove',
+        });
+      expect(res.status).toBe(200);
+    });
+
+    it('should show both jobs in preview before disabling', async () => {
+      const page = await request(app).get('/');
+      const commentMatch = page.text.match(/stopJob\('([^']+)'\)[^<]*?comment-disable-test/);
+      const removeMatch = page.text.match(/stopJob\('([^']+)'\)[^<]*?remove-disable-test/);
+      if (commentMatch) commentJobId = commentMatch[1];
+      if (removeMatch) removeJobId = removeMatch[1];
+    });
+
+    it('should show commented line when job with disableMethod=comment is stopped', async () => {
+      if (!commentJobId) return;
+      await request(app)
+        .post('/stop')
+        .send({ _id: commentJobId, disableMethod: 'comment' });
+
+      const res = await request(app).get('/preview_crontab');
+      expect(res.text).toContain('# 0 0 * * *');
+      expect(res.text).toContain('echo comment');
+    });
+
+    it('should NOT show line when job with disableMethod=remove is stopped', async () => {
+      if (!removeJobId) return;
+      await request(app)
+        .post('/stop')
+        .send({ _id: removeJobId, disableMethod: 'remove' });
+
+      const res = await request(app).get('/preview_crontab');
+      const lines = res.text.split('\n');
+      const removeLine = lines.find(l => l.includes('echo remove') && !l.startsWith('#'));
+      expect(removeLine).toBeUndefined();
+    });
+
+    it('should cleanup test jobs', async () => {
+      const page = await request(app).get('/');
+      const ids = [];
+      const matches = page.text.match(/deleteJob\('([^']+)'\)/g);
+      if (matches) {
+        matches.forEach(m => {
+          const id = m.match(/'([^']+)'/)[1];
+          if (id && (id.includes('comment') || id.includes('remove') || id.includes('minimal'))) {
+            ids.push(id);
+          }
+        });
+      }
+
+      for (const id of ids) {
+        await request(app).post('/remove').send({ _id: id });
+      }
+    });
+  });
+});
 describe('Routes module', () => {
   it('should export routes with base_url prefix', () => {
     const { routes, base_url } = require('../routes');

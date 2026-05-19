@@ -47,6 +47,20 @@
 		<input type="checkbox" class="form-check-input" id="job-logging"/>
 		<label class="form-check-label" for="job-logging">Enable error logging.</label>
 	</div>
+	<div class="form-check">
+		<input type="checkbox" class="form-check-input" id="job-minimal"/>
+		<label class="form-check-label" for="job-minimal">Minimal Crontab (no output capture)</label>
+	</div>
+	<br/>
+	<label class="form-label">When disabled:</label>
+	<div class="form-check">
+		<input class="form-check-input" type="radio" name="job-disable-method" id="job-disable-remove" value="remove" checked/>
+		<label class="form-check-label" for="job-disable-remove">Remove from crontab</label>
+	</div>
+	<div class="form-check">
+		<input class="form-check-input" type="radio" name="job-disable-method" id="job-disable-comment" value="comment"/>
+		<label class="form-check-label" for="job-disable-comment">Comment out (#)</label>
+	</div>
 	<br/>
 	<a class="btn btn-primary btn-sm" data-json="{}" onclick="setMailConfig(this);" id="job-mailing">Mailing</a>
 	<a class="btn btn-primary btn-sm" data-json="{}" onclick="setHookConfig(this);">Hooks</a>

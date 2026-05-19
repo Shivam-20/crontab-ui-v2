@@ -58,7 +58,9 @@ function deleteJob(_id) {
 
 function stopJob(_id) {
   messageBox('<p> Do you want to stop this Job? </p>', 'Confirm stop job', null, null, function() {
-    $.post(routes.stop, {_id: _id}, function() {
+    var job = crontabs.find(c => String(c._id) === String(_id));
+    var disableMethod = (job && job.disableMethod) ? job.disableMethod : 'remove';
+    $.post(routes.stop, {_id: _id, disableMethod: disableMethod}, function() {
       location.reload();
     });
   });
@@ -105,7 +107,7 @@ function getCrontab() {
 function editJob(_id) {
   var job = null;
   crontabs.forEach(function(crontab) {
-    if (crontab._id == _id) job = crontab;
+    if (String(crontab._id) === String(_id)) job = crontab;
   });
 
   if (job) {
@@ -125,8 +127,15 @@ function editJob(_id) {
     }
     schedule = job.schedule;
     job_command = job.command;
-    if (job.logging && job.logging != 'false')
+    if (job.logging && job.logging !== 'false')
       $('#job-logging').prop('checked', true);
+    if (job.minimal && job.minimal !== 'false')
+      $('#job-minimal').prop('checked', true);
+    
+    // Set disable method radio buttons
+    var disableMethod = job.disableMethod || 'remove';
+    $('input[name="job-disable-method"][value="' + disableMethod + '"]').prop('checked', true);
+    
     job_string();
   }
 
@@ -138,7 +147,9 @@ function editJob(_id) {
     var name = $('#job-name').val();
     var mailing = JSON.parse($('#job-mailing').attr('data-json'));
     var logging = $('#job-logging').prop('checked');
-    $.post(routes.save, {name: name, command: collapsedCommand(), schedule: schedule, _id: _id, logging: logging, mailing: mailing}, function() {
+    var minimal = $('#job-minimal').prop('checked');
+    var disableMethod = $('input[name="job-disable-method"]:checked').val();
+    $.post(routes.save, {name: name, command: collapsedCommand(), schedule: schedule, _id: _id, logging: logging, mailing: mailing, minimal: minimal, disableMethod: disableMethod}, function() {
       location.reload();
     });
     getModal('job').hide();
@@ -159,6 +170,8 @@ function newJob() {
   $('#job-command').val('');
   $('#job-mailing').attr('data-json', '{}');
   $('#job-logging').prop('checked', false);
+  $('#job-minimal').prop('checked', false);
+  $('input[name="job-disable-method"][value="remove"]').prop('checked', true);
   job_string();
 
   var saveBtn = document.getElementById('job-save');
@@ -169,7 +182,9 @@ function newJob() {
     var name = $('#job-name').val();
     var mailing = JSON.parse($('#job-mailing').attr('data-json'));
     var logging = $('#job-logging').prop('checked');
-    $.post(routes.save, {name: name, command: collapsedCommand(), schedule: schedule, _id: -1, logging: logging, mailing: mailing}, function() {
+    var minimal = $('#job-minimal').prop('checked');
+    var disableMethod = $('input[name="job-disable-method"]:checked').val();
+    $.post(routes.save, {name: name, command: collapsedCommand(), schedule: schedule, _id: -1, logging: logging, mailing: mailing, minimal: minimal, disableMethod: disableMethod}, function() {
       location.reload();
     });
     getModal('job').hide();
@@ -179,13 +194,15 @@ function newJob() {
 function duplicateJob(_id) {
   var job = null;
   crontabs.forEach(function(crontab) {
-    if (crontab._id == _id) job = crontab;
+    if (String(crontab._id) === String(_id)) job = crontab;
   });
   if (!job) return;
 
   var name = job.name ? job.name + ' (copy)' : '';
-  var logging = (job.logging && job.logging != 'false') ? job.logging : 'false';
+  var logging = (job.logging && job.logging !== 'false') ? job.logging : 'false';
+  var minimal = (job.minimal && job.minimal !== 'false') ? job.minimal : 'false';
   var mailing = job.mailing || {};
+  var disableMethod = job.disableMethod || 'remove';
 
   $.post(routes.save, {
     name: name,
@@ -193,7 +210,9 @@ function duplicateJob(_id) {
     schedule: job.schedule,
     _id: -1,
     logging: logging,
-    mailing: mailing
+    mailing: mailing,
+    minimal: minimal,
+    disableMethod: disableMethod
   }, function() {
     location.reload();
   });

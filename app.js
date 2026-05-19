@@ -91,7 +91,7 @@ app.get(routes.root, (req, res) => {
 
 app.post(routes.save, (req, res) => {
   if (req.body._id == -1) { // eslint-disable-line eqeqeq
-    crontab.create_new(req.body.name, req.body.command, req.body.schedule, req.body.logging, req.body.mailing);
+    crontab.create_new(req.body.name, req.body.command, req.body.schedule, req.body.logging, req.body.mailing, req.body.minimal, req.body.disableMethod);
   } else {
     crontab.update(req.body);
   }
@@ -99,7 +99,7 @@ app.post(routes.save, (req, res) => {
 });
 
 app.post(routes.stop, (req, res) => {
-  crontab.status(req.body._id, true);
+  crontab.status(req.body._id, true, req.body.disableMethod);
   res.end();
 });
 
@@ -166,6 +166,7 @@ app.get(routes.export, (req, res) => {
 app.post(routes.import, (req, res, next) => {
   crontab.backup((err) => {
     if (err) return next(err);
+    crontab.close_db();
     req.pipe(req.busboy);
     req.busboy.on('file', (_fieldname, file) => {
       const fstream = fs.createWriteStream(crontab.crontab_db_file);
@@ -181,8 +182,9 @@ app.post(routes.import, (req, res, next) => {
 app.get(routes.import_crontab, (req, res, next) => {
   crontab.backup((err) => {
     if (err) return next(err);
-    crontab.import_crontab();
-    res.end();
+    crontab.import_crontab(() => {
+      res.end();
+    });
   });
 });
 
