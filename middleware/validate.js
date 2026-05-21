@@ -8,10 +8,10 @@ function sanitizeFilename(name) {
 }
 
 function validateDbParam(req, res, next) {
-  if (req.query.db) {
-    const sanitized = sanitizeFilename(req.query.db);
-    if (sanitized !== req.query.db) {
-      return res.status(400).json({ message: 'Invalid db parameter' });
+  if (req.query.id) {
+    const sanitized = sanitizeFilename(req.query.id);
+    if (sanitized !== req.query.id) {
+      return res.status(400).json({ message: 'Invalid id parameter' });
     }
   }
   next();

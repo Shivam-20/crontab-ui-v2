@@ -155,9 +155,9 @@ describe('Crontab UI', () => {
 
   describe('Input validation', () => {
     it('should reject path traversal in db param', async () => {
-      const res = await request(app).get('/restore?db=../../etc/passwd');
+      const res = await request(app).get('/restore?id=../../etc/passwd');
       expect(res.status).toBe(400);
-      expect(res.body.message).toContain('Invalid db parameter');
+      expect(res.body.message).toContain('Invalid id parameter');
     });
 
     it('should reject invalid characters in id param', async () => {
@@ -166,8 +166,8 @@ describe('Crontab UI', () => {
       expect(res.body.message).toContain('Invalid id parameter');
     });
 
-    it('should allow valid db param', async () => {
-      const res = await request(app).get('/restore?db=crontab.db');
+    it('should allow valid id param', async () => {
+      const res = await request(app).get('/restore?id=valid-id');
       expect(res.status).toBe(200);
     });
 

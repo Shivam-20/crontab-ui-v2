@@ -205,20 +205,23 @@ exports.set_crontab = (envVars, callback) => {
   });
 };
 
-exports.get_backup_names = () => {
-  const backups = fs.readdirSync(dbFolder)
-    .filter((file) => file.indexOf('backup') === 0);
-
-  const backupDate = (name) => {
-    const t = name.split('backup')[1];
-    return new Date(t.substring(0, t.length - 3)).valueOf();
-  };
-
-  backups.sort((a, b) => backupDate(b) - backupDate(a));
-  return backups;
+exports.get_backups = () => {
+  return db.getBackups();
 };
 
 exports.backup = (callback) => {
+  const backupName = `backup ${new Date().toString().replace('+', ' ')}.db`;
+  try {
+    const data = fs.readFileSync(crontabDbFile);
+    db.saveBackup(backupName, data);
+    callback();
+  } catch (err) {
+    console.error(err);
+    callback(err);
+  }
+};
+
+exports.backup_file = (callback) => {
   const dest = path.join(dbFolder, `backup ${new Date().toString().replace('+', ' ')}.db`);
   fs.copyFile(crontabDbFile, dest, (err) => {
     if (err) {
@@ -229,10 +232,12 @@ exports.backup = (callback) => {
   });
 };
 
-exports.restore = (dbName) => {
-  fs.createReadStream(path.join(dbFolder, dbName))
-    .pipe(fs.createWriteStream(crontabDbFile));
-  db.reload();
+exports.restore = (backupId) => {
+  const data = db.restoreBackup(backupId);
+  if (data) {
+    fs.writeFileSync(crontabDbFile, data);
+    db.reload();
+  }
 };
 
 exports.reload_db = () => {

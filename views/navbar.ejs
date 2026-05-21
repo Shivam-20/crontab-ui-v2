@@ -13,8 +13,8 @@
             <% if (backups.length == 0){ %>
               <li><a class="dropdown-item" href="#">None</a></li>
             <% } else { %>
-              <% backups.forEach(function(file){ %>
-                <li><a class="dropdown-item" href="<%= JSON.parse(routes).restore %>?db=<%= file %>"><%= file %></a></li>
+              <% backups.forEach(function(backup){ %>
+                <li><a class="dropdown-item" href="<%= JSON.parse(routes).restore %>?id=<%= backup._id %>"><%= backup.name %></a></li>
               <% }) %>
             <% } %>
           </ul>

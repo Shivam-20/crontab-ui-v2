@@ -82,7 +82,7 @@ app.get(routes.root, (req, res) => {
     res.render('index', {
       routes: JSON.stringify(routesRelative),
       crontabs: JSON.stringify(docs),
-      backups: crontab.get_backup_names(),
+      backups: crontab.get_backups(),
       env: crontab.get_env(),
       dayjs,
     });
@@ -133,12 +133,12 @@ app.get(routes.backup, (req, res, next) => {
 });
 
 app.get(routes.restore, validateDbParam, (req, res) => {
-  restore.crontabs(req.query.db, (docs) => {
+  restore.crontabs(req.query.id, (docs) => {
     res.render('restore', {
       routes: JSON.stringify(routesRelative),
       crontabs: JSON.stringify(docs),
-      backups: crontab.get_backup_names(),
-      db: req.query.db,
+      backups: crontab.get_backups(),
+      db: req.query.id,
     });
   });
 });
@@ -149,7 +149,7 @@ app.get(routes.delete_backup, validateDbParam, (req, res) => {
 });
 
 app.get(routes.restore_backup, validateDbParam, (req, res) => {
-  crontab.restore(req.query.db);
+  crontab.restore(req.query.id);
   res.end();
 });
 
@@ -164,7 +164,7 @@ app.get(routes.export, (req, res) => {
 });
 
 app.post(routes.import, (req, res, next) => {
-  crontab.backup((err) => {
+  crontab.backup_file((err) => {
     if (err) return next(err);
     crontab.close_db();
     req.pipe(req.busboy);
@@ -180,7 +180,7 @@ app.post(routes.import, (req, res, next) => {
 });
 
 app.get(routes.import_crontab, (req, res, next) => {
-  crontab.backup((err) => {
+  crontab.backup_file((err) => {
     if (err) return next(err);
     crontab.import_crontab(() => {
       res.end();
