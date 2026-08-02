@@ -70,7 +70,7 @@ function makeCommand(tab) {
   }
 
   if (tab.mailing && JSON.stringify(tab.mailing) !== '{}') {
-    result += `; /usr/local/bin/node ${__dirname}/bin/crontab-ui-mailer.js ${tab._id} ${stdout} ${stderr}`;
+    result += `; ${JSON.stringify(process.execPath)} ${__dirname}/bin/crontab-ui-mailer.js ${tab._id} ${stdout} ${stderr}`;
   }
 
   return result;
@@ -102,7 +102,11 @@ exports.update = (data) => {
 };
 
 exports.status = (_id, stopped, disableMethod) => {
-  db.update({ _id }, { $set: { stopped, saved: false, disableMethod: disableMethod || 'remove' } });
+  const patch = { stopped, saved: false };
+  if (disableMethod) {
+    patch.disableMethod = disableMethod;
+  }
+  db.update({ _id }, { $set: patch });
 };
 
 exports.remove = (_id) => {
@@ -212,7 +216,7 @@ exports.get_backups = () => {
 exports.backup = (callback) => {
   const backupName = `backup ${new Date().toString().replace('+', ' ')}.db`;
   try {
-    const data = fs.readFileSync(crontabDbFile);
+    const data = db.snapshotCrontabSync();
     db.saveBackup(backupName, data);
     callback();
   } catch (err) {
@@ -235,6 +239,8 @@ exports.backup_file = (callback) => {
 exports.restore = (backupId) => {
   const data = db.restoreBackup(backupId);
   if (data) {
+    db.close();
+    db.removeSqliteSidecars(crontabDbFile);
     fs.writeFileSync(crontabDbFile, data);
     db.reload();
   }
@@ -287,8 +293,9 @@ exports.import_crontab = (callback) => {
         pending += 1;
         const name = `${namePrefix}_${index}`;
         db.findOne({ command, schedule }, (err, doc) => {
-          if (err) throw err;
-          if (!doc) {
+          if (err) {
+            console.error(err);
+          } else if (!doc) {
             exports.create_new(name, command, schedule, null);
           } else {
             doc.command = command;

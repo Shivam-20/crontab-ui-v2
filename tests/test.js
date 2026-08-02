@@ -17,6 +17,20 @@ process.env.HOST = '127.0.0.1';
 
 const app = require('../app');
 
+function countBackupLinks(html) {
+  return (html.match(/restore\?id=/g) || []).length;
+}
+
+function getJobIdByName(name) {
+  const crontab = require('../crontab');
+  return new Promise((resolve) => {
+    crontab.crontabs((docs) => {
+      const job = docs.find((d) => d.name === name);
+      resolve(job ? job._id : null);
+    });
+  });
+}
+
 describe('Crontab UI', () => {
   afterAll(() => {
     fs.rmSync(testDbPath, { recursive: true, force: true });
@@ -64,7 +78,7 @@ describe('Crontab UI', () => {
     });
 
     it('should stop a job', async () => {
-      if (!jobId) return;
+      expect(jobId).toBeTruthy();
       const res = await request(app)
         .post('/stop')
         .send({ _id: jobId });
@@ -72,7 +86,7 @@ describe('Crontab UI', () => {
     });
 
     it('should start a job', async () => {
-      if (!jobId) return;
+      expect(jobId).toBeTruthy();
       const res = await request(app)
         .post('/start')
         .send({ _id: jobId });
@@ -100,7 +114,7 @@ describe('Crontab UI', () => {
       const page = await request(app).get('/');
       const match = page.text.match(/duplicateJob\('([^']+)'\)/);
       const jobId = match ? match[1] : null;
-      if (!jobId) return;
+      expect(jobId).toBeTruthy();
 
       const jobMatch = page.text.match(/test-job/);
       expect(jobMatch).not.toBeNull();
@@ -139,7 +153,7 @@ describe('Crontab UI', () => {
     it('should only include active (non-stopped) jobs', async () => {
       const page = await request(app).get('/');
       const match = page.text.match(/stopJob\('([^']+)'\)/);
-      if (!match) return;
+      expect(match).toBeTruthy();
 
       await request(app).post('/stop').send({ _id: match[1] });
 
@@ -187,7 +201,7 @@ describe('Crontab UI', () => {
     });
 
     it('should remove a job', async () => {
-      if (!jobId) return;
+      expect(jobId).toBeTruthy();
       const res = await request(app)
         .post('/remove')
         .send({ _id: jobId });
@@ -197,7 +211,7 @@ describe('Crontab UI', () => {
     it('should remove the duplicated job too', async () => {
       const page = await request(app).get('/');
       const match = page.text.match(/deleteJob\('([^']+)'\)/);
-      if (!match) return;
+      expect(match).toBeTruthy();
       const res = await request(app)
         .post('/remove')
         .send({ _id: match[1] });
@@ -260,30 +274,28 @@ describe('Crontab UI', () => {
         _id: -1, name: 'backup-test', command: 'echo backup',
         schedule: '* * * * *', logging: 'false', mailing: {},
       });
-      // small delay so backup filename (based on date) doesn't collide
-      await new Promise((r) => setTimeout(r, 1100));
-      const backupsBefore = fs.readdirSync(testDbPath)
-        .filter((f) => f.startsWith('backup'));
+      const pageBefore = await request(app).get('/');
+      const backupsBefore = countBackupLinks(pageBefore.text);
       await request(app).get('/import_crontab');
-      const backupsAfter = fs.readdirSync(testDbPath)
-        .filter((f) => f.startsWith('backup'));
-      expect(backupsAfter.length).toBe(backupsBefore.length + 1);
+      const pageAfter = await request(app).get('/');
+      const backupsAfter = countBackupLinks(pageAfter.text);
+      expect(backupsAfter).toBe(backupsBefore + 1);
     });
   });
 
   describe('POST /import (auto-backup)', () => {
     it('should create a backup before importing a db file', async () => {
-      // small delay so backup filename (based on date) doesn't collide
-      await new Promise((r) => setTimeout(r, 1100));
-      const backupsBefore = fs.readdirSync(testDbPath)
-        .filter((f) => f.startsWith('backup'));
+      const pageBefore = await request(app).get('/');
+      const backupsBefore = countBackupLinks(pageBefore.text);
+      const db = require('../lib/db');
+      db.checkpoint();
       const dbContent = fs.readFileSync(path.join(testDbPath, 'crontab.db'));
       await request(app)
         .post('/import')
         .attach('file', dbContent, 'crontab.db');
-      const backupsAfter = fs.readdirSync(testDbPath)
-        .filter((f) => f.startsWith('backup'));
-      expect(backupsAfter.length).toBe(backupsBefore.length + 1);
+      const pageAfter = await request(app).get('/');
+      const backupsAfter = countBackupLinks(pageAfter.text);
+      expect(backupsAfter).toBe(backupsBefore + 1);
     });
   });
 
@@ -364,15 +376,14 @@ describe('Minimal crontab and disable methods', () => {
     });
 
     it('should show both jobs in preview before disabling', async () => {
-      const page = await request(app).get('/');
-      const commentMatch = page.text.match(/stopJob\('([^']+)'\)[^<]*?comment-disable-test/);
-      const removeMatch = page.text.match(/stopJob\('([^']+)'\)[^<]*?remove-disable-test/);
-      if (commentMatch) commentJobId = commentMatch[1];
-      if (removeMatch) removeJobId = removeMatch[1];
+      commentJobId = await getJobIdByName('comment-disable-test');
+      removeJobId = await getJobIdByName('remove-disable-test');
+      expect(commentJobId).toBeTruthy();
+      expect(removeJobId).toBeTruthy();
     });
 
     it('should show commented line when job with disableMethod=comment is stopped', async () => {
-      if (!commentJobId) return;
+      expect(commentJobId).toBeTruthy();
       await request(app)
         .post('/stop')
         .send({ _id: commentJobId, disableMethod: 'comment' });
@@ -383,7 +394,7 @@ describe('Minimal crontab and disable methods', () => {
     });
 
     it('should NOT show line when job with disableMethod=remove is stopped', async () => {
-      if (!removeJobId) return;
+      expect(removeJobId).toBeTruthy();
       await request(app)
         .post('/stop')
         .send({ _id: removeJobId, disableMethod: 'remove' });
@@ -394,23 +405,102 @@ describe('Minimal crontab and disable methods', () => {
       expect(removeLine).toBeUndefined();
     });
 
-    it('should cleanup test jobs', async () => {
-      const page = await request(app).get('/');
-      const ids = [];
-      const matches = page.text.match(/deleteJob\('([^']+)'\)/g);
-      if (matches) {
-        matches.forEach(m => {
-          const id = m.match(/'([^']+)'/)[1];
-          if (id && (id.includes('comment') || id.includes('remove') || id.includes('minimal'))) {
-            ids.push(id);
+    it('should preserve disableMethod=comment across start then stop', async () => {
+      expect(commentJobId).toBeTruthy();
+      const crontab = require('../crontab');
+
+      await request(app)
+        .post('/stop')
+        .send({ _id: commentJobId, disableMethod: 'comment' });
+
+      // Start without sending disableMethod — must not reset to remove
+      await request(app)
+        .post('/start')
+        .send({ _id: commentJobId });
+
+      await new Promise((resolve, reject) => {
+        crontab.get_crontab(commentJobId, (job) => {
+          try {
+            expect(job).toBeTruthy();
+            expect(job.disableMethod).toBe('comment');
+            expect(job.stopped).toBe(false);
+            resolve();
+          } catch (e) {
+            reject(e);
           }
         });
+      });
+
+      await request(app)
+        .post('/stop')
+        .send({ _id: commentJobId, disableMethod: 'comment' });
+
+      const res = await request(app).get('/preview_crontab');
+      expect(res.text).toMatch(/# 0 0 \* \* \*.*echo comment/);
+    });
+
+    it('should cleanup test jobs', async () => {
+      const ids = [];
+      for (const name of ['comment-disable-test', 'remove-disable-test', 'minimal-test']) {
+        const id = await getJobIdByName(name);
+        if (id) ids.push(id);
       }
 
       for (const id of ids) {
         await request(app).post('/remove').send({ _id: id });
       }
     });
+  });
+});
+describe('Backup delete and mailer path', () => {
+  it('should delete a backup by id query param', async () => {
+    await request(app).post('/save').send({
+      _id: -1,
+      name: 'delete-backup-job',
+      command: 'echo delete-backup',
+      schedule: '* * * * *',
+      logging: 'false',
+      mailing: {},
+    });
+
+    const backupRes = await request(app).get('/backup');
+    expect(backupRes.status).toBe(200);
+
+    const page = await request(app).get('/');
+    const match = page.text.match(/restore\?id=([^"'\s]+)/);
+    expect(match).toBeTruthy();
+    const backupId = match[1];
+
+    const del = await request(app).get(`/delete?id=${encodeURIComponent(backupId)}`);
+    expect(del.status).toBe(200);
+
+    const after = await request(app).get('/');
+    expect(after.text).not.toContain(`restore?id=${backupId}`);
+  });
+
+  it('should use process.execPath in mailing wrapper', async () => {
+    await request(app).post('/save').send({
+      _id: -1,
+      name: 'mailer-path-test',
+      command: 'echo mailme',
+      schedule: '1 1 * * *',
+      logging: 'false',
+      mailing: { transporterStr: 'smtps://user:pass@smtp.example.com', mailOptions: {} },
+      minimal: false,
+    });
+
+    const res = await request(app).get('/preview_crontab');
+    expect(res.status).toBe(200);
+    expect(res.text).toContain(process.execPath);
+    expect(res.text).not.toContain('/usr/local/bin/node');
+    expect(res.text).toContain('crontab-ui-mailer.js');
+
+    for (const name of ['mailer-path-test', 'delete-backup-job']) {
+      const id = await getJobIdByName(name);
+      if (id) {
+        await request(app).post('/remove').send({ _id: id });
+      }
+    }
   });
 });
 describe('Routes module', () => {

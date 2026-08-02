@@ -14,6 +14,7 @@ const rateLimit = require('express-rate-limit');
 
 const crontab = require('./crontab');
 const restore = require('./restore');
+const db = require('./lib/db');
 const packageJson = require('./package.json');
 const { base_url: baseUrl, routes, relative: routesRelative } = require('./routes');
 const setupAuth = require('./middleware/auth');
@@ -144,7 +145,7 @@ app.get(routes.restore, validateDbParam, (req, res) => {
 });
 
 app.get(routes.delete_backup, validateDbParam, (req, res) => {
-  restore.delete(req.query.db);
+  restore.delete(req.query.id);
   res.end();
 });
 
@@ -164,9 +165,10 @@ app.get(routes.export, (req, res) => {
 });
 
 app.post(routes.import, (req, res, next) => {
-  crontab.backup_file((err) => {
+  crontab.backup((err) => {
     if (err) return next(err);
     crontab.close_db();
+    db.removeSqliteSidecars(crontab.crontab_db_file);
     req.pipe(req.busboy);
     req.busboy.on('file', (_fieldname, file) => {
       const fstream = fs.createWriteStream(crontab.crontab_db_file);
@@ -180,7 +182,7 @@ app.post(routes.import, (req, res, next) => {
 });
 
 app.get(routes.import_crontab, (req, res, next) => {
-  crontab.backup_file((err) => {
+  crontab.backup((err) => {
     if (err) return next(err);
     crontab.import_crontab(() => {
       res.end();
